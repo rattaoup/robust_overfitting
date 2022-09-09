@@ -310,6 +310,7 @@ def main():
         if len(data_list)> args.data_window:
             data_list.pop(0)
         ########
+
         for i, batch in enumerate(train_batches):
             if args.eval:
                 break
@@ -353,18 +354,22 @@ def main():
 
                 x_old = torch.stack(x_old)
                 y_old = torch.stack(y_old)
-                x_adv = (torch.vstack([x_adv.to(device), x_old.to(device)])).to(device)
-                y = (torch.hstack([y.to(device), y_old.to(device)])).to(device)
+                x_stack = (torch.vstack([x_adv.to(device), x_old.to(device)])).to(device)
+                y_stack = (torch.hstack([y.to(device), y_old.to(device)])).to(device)
+
+            else:
+                x_stack = x_adv
+                y_stack = y
             
             # the code does not work for mix up though :o
 
             ########
 
-            robust_output = model(normalize(x_adv))
+            robust_output = model(normalize(x_stack))
             if args.mixup:
                 robust_loss = mixup_criterion(criterion, robust_output, y_a, y_b, lam)
             else:
-                robust_loss = criterion(robust_output, y)
+                robust_loss = criterion(robust_output, y_stack)
 
             if args.l1:
                 for name,param in model.named_parameters():
@@ -382,7 +387,7 @@ def main():
                 loss = criterion(output, y)
 
             train_robust_loss += robust_loss.item() * y.size(0)
-            train_robust_acc += (robust_output.max(1)[1] == y).sum().item()
+            train_robust_acc += (robust_output.max(1)[1] == y_stack).sum().item()
             train_loss += loss.item() * y.size(0)
             train_acc += (output.max(1)[1] == y).sum().item()
             train_n += y.size(0)
