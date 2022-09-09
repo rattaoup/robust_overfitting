@@ -3,6 +3,7 @@ from collections import namedtuple
 import torch
 from torch import nn
 import torchvision
+from torch.utils.data import Dataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -76,7 +77,7 @@ class Transform():
         for choices, f in zip(self.choices, self.transforms):
             args = {k: v[index] for (k,v) in choices.items()}
             data = f(data, **args)
-        return data, labels
+        return index, data, labels
     
     def set_random_choices(self):
         self.choices = []
@@ -99,6 +100,7 @@ def cifar10(root):
         'test': {'data': test_set.data, 'labels': test_set.targets}
     }
 
+
 #####################
 ## data loading
 #####################
@@ -115,7 +117,7 @@ class Batches():
     def __iter__(self):
         if self.set_random_choices:
             self.dataset.set_random_choices() 
-        return ({'input': x.to(device).half(), 'target': y.to(device).long()} for (x,y) in self.dataloader)
+        return ({'index': idx, 'input': x.to(device).half(), 'target': y.to(device).long()} for (idx, x,y) in self.dataloader)
     
     def __len__(self): 
         return len(self.dataloader)

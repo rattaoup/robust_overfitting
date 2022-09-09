@@ -17,8 +17,8 @@ from preactresnet import PreActResNet18
 
 from utils import *
 
-mu = torch.tensor(cifar10_mean).view(3,1,1).cuda()
-std = torch.tensor(cifar10_std).view(3,1,1).cuda()
+mu = torch.tensor(cifar10_mean).view(3,1,1).to(device)
+std = torch.tensor(cifar10_std).view(3,1,1).to(device)
 
 def normalize(X):
     return (X - mu)/std
@@ -42,7 +42,7 @@ class Batches():
     def __iter__(self):
         if self.set_random_choices:
             self.dataset.set_random_choices()
-        return ({'input': x.to(device).float(), 'target': y.to(device).long()} for (x,y) in self.dataloader)
+        return ({'index': idx, 'input': x.to(device).float(), 'target': y.to(device).long()} for (idx, x,y) in self.dataloader)
 
     def __len__(self):
         return len(self.dataloader)
@@ -56,7 +56,7 @@ def mixup_data(x, y, alpha=1.0):
         lam = 1
 
     batch_size = x.size()[0]
-    index = torch.randperm(batch_size).cuda()
+    index = torch.randperm(batch_size).to(device)
 
     mixed_x = lam * x + (1 - lam) * x[index, :]
     y_a, y_b = y, y[index]
@@ -70,10 +70,10 @@ def mixup_criterion(criterion, pred, y_a, y_b, lam):
 def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts,
                norm, early_stop=False,
                mixup=False, y_a=None, y_b=None, lam=None):
-    max_loss = torch.zeros(y.shape[0]).cuda()
-    max_delta = torch.zeros_like(X).cuda()
+    max_loss = torch.zeros(y.shape[0]).to(device)
+    max_delta = torch.zeros_like(X).to(device)
     for _ in range(restarts):
-        delta = torch.zeros_like(X).cuda()
+        delta = torch.zeros_like(X).to(device)
         if norm == "l_inf":
             delta.uniform_(-epsilon, epsilon)
         elif norm == "l_2":
@@ -155,6 +155,7 @@ def get_args():
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--val', action='store_true')
     parser.add_argument('--chkpt-iters', default=10, type=int)
+    parser.add_argument('--data-window', type=int, default=1)
     return parser.parse_args()
 
 
@@ -212,7 +213,7 @@ def main():
     else:
         raise ValueError("Unknown model")
 
-    model = nn.DataParallel(model).cuda()
+    model = nn.DataParallel(model).to(device)
     model.train()
 
     if args.l2:
@@ -232,10 +233,10 @@ def main():
     criterion = nn.CrossEntropyLoss()
 
     if args.attack == 'free':
-        delta = torch.zeros(args.batch_size, 3, 32, 32).cuda()
+        delta = torch.zeros(args.batch_size, 3, 32, 32).to(device)
         delta.requires_grad = True
     elif args.attack == 'fgsm' and args.fgsm_init == 'previous':
-        delta = torch.zeros(args.batch_size, 3, 32, 32).cuda()
+        delta = torch.zeros(args.batch_size, 3, 32, 32).to(device)
         delta.requires_grad = True
 
     if args.attack == 'free':
@@ -290,6 +291,12 @@ def main():
         logger.info("[Evaluation mode]")
 
     logger.info('Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Train Robust Loss \t Train Robust Acc \t Test Loss \t Test Acc \t Test Robust Loss \t Test Robust Acc')
+    
+    ######## Follow the leader 
+    data_list = []
+    ########
+    
+    
     for epoch in range(start_epoch, epochs):
         model.train()
         start_time = time.time()
@@ -298,6 +305,13 @@ def main():
         train_robust_loss = 0
         train_robust_acc = 0
         train_n = 0
+
+        ######## Pop old data out of the list
+        data_list.append({'X': {}, 'y':{}})
+        if len(data_list)> args.data_window:
+            data_list.pop(0)
+        ########
+
         for i, batch in enumerate(train_batches):
             if args.eval:
                 break
@@ -321,7 +335,34 @@ def main():
             elif args.attack == 'none':
                 delta = torch.zeros_like(X)
 
-            robust_output = model(normalize(torch.clamp(X + delta[:X.size(0)], min=lower_limit, max=upper_limit)))
+            x_adv = torch.clamp(X + delta[:X.size(0)], min=lower_limit, max=upper_limit)
+
+            ######## Follow the leader on data
+            # save current adv example
+            idx = batch['index']
+            for i in range(idx.shape[0]):
+                data_list[-1]['X'][idx[i].item()] = x_adv[i,:].cpu().detach()
+                data_list[-1]['y'][idx[i].item()] = y[i].cpu().detach()
+
+            # look up old stuff and stack up with the current x
+            x_old = []
+            y_old = []
+            if len(data_list) > 1:
+                for i in range(len(data_list) - 1):
+                    for j in range(idx.shape[0]):
+                        x_old.append(data_list[i]['X'][idx[j].item()])
+                        y_old.append(data_list[i]['y'][idx[j].item()])
+
+                x_old = torch.stack(x_old)
+                y_old = torch.stack(y_old)
+                x_adv = (torch.vstack([x_adv.to(device), x_old.to(device)])).to(device)
+                y = (torch.hstack([y.to(device), y_old.to(device)])).to(device)
+            
+            # the code does not work for mix up though :o
+
+            ########
+
+            robust_output = model(normalize(x_adv))
             if args.mixup:
                 robust_loss = mixup_criterion(criterion, robust_output, y_a, y_b, lam)
             else:
