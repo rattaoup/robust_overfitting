@@ -199,10 +199,9 @@ def main():
         dataset['train']['labels']))
     train_set_x = Transform(train_set, transforms)
     train_batches = Batches(train_set_x, args.batch_size, shuffle=True, set_random_choices=True, num_workers=2)
-
     test_set = list(zip(transpose(dataset['test']['data']/255.), dataset['test']['labels']))
-    test_batches = Batches(test_set, args.batch_size, shuffle=False, num_workers=2)
-
+    test_set_x = Transform(test_set, [Identity()])
+    test_batches = Batches(test_set_x, args.batch_size, shuffle=False, set_random_choices=True, num_workers=2)
     epsilon = (args.epsilon / 255.)
     pgd_alpha = (args.pgd_alpha / 255.)
 
@@ -311,7 +310,6 @@ def main():
         if len(data_list)> args.data_window:
             data_list.pop(0)
         ########
-
         for i, batch in enumerate(train_batches):
             if args.eval:
                 break
@@ -390,7 +388,6 @@ def main():
             train_n += y.size(0)
 
         train_time = time.time()
-
         model.eval()
         test_loss = 0
         test_acc = 0
@@ -475,8 +472,8 @@ def main():
 
             # save checkpoint
             if (epoch+1) % args.chkpt_iters == 0 or epoch+1 == epochs:
-                torch.save(model.state_dict(), os.path.join(args.fname, f'model_{epoch}.pth'))
-                torch.save(opt.state_dict(), os.path.join(args.fname, f'opt_{epoch}.pth'))
+                torch.save(model.state_dict(), os.path.join(args.fname, f'model_{epoch}_{args.attack}_{args.data_window}.pth'))
+                torch.save(opt.state_dict(), os.path.join(args.fname, f'opt_{epoch}_{args.attack}_{args.data_window}.pth'))
 
             # save best
             if test_robust_acc/test_n > best_test_robust_acc:
@@ -486,7 +483,7 @@ def main():
                         'test_robust_loss':test_robust_loss/test_n,
                         'test_loss':test_loss/test_n,
                         'test_acc':test_acc/test_n,
-                    }, os.path.join(args.fname, f'model_best.pth'))
+                    }, os.path.join(args.fname, f'model_best_{args.attack}_{args.data_window}.pth'))
                 best_test_robust_acc = test_robust_acc/test_n
         else:
             logger.info('%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.4f \t %.4f \t \t %.4f \t \t %.4f \t %.4f \t %.4f \t \t %.4f',

@@ -34,6 +34,15 @@ def transpose(x, source='NHWC', target='NCHW'):
 ## data augmentation
 #####################
 
+#####
+class Identity(namedtuple('Identity', ())):
+    def __call__(self,x, choice):
+        return x
+    def options(self, x_shape):
+        return {'choice': [True]}
+
+#####
+
 class Crop(namedtuple('Crop', ('h', 'w'))):
     def __call__(self, x, x0, y0):
         return x[:,y0:y0+self.h,x0:x0+self.w]
